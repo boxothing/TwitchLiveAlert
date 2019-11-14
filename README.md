@@ -1,5 +1,7 @@
 # 트위치 생방 알리미
 
+## [생방알리미 v1.0 다운로드](https://github.com/boxothing/TwitchLiveAlert/releases/download/v1.0/TwitchLiveAlert-1.0.zip)
+
 ![썸네일 모드](https://i.imgur.com/WAZiAGw.jpg)
 
 트위치 생방알리미는 스트리머가 생방을 시작했을 경우 텔레그램을 통해 문자 알림을 보내주는 프로그램입니다
@@ -148,4 +150,8 @@ starcraft_kr
 lck_korea
 playoverwatch_kr
 teaminven
+hrannnoh
+taezzang
+dardarae
+jesssul
 ```
