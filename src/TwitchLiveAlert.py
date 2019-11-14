@@ -76,7 +76,7 @@ class TwitchLiveAlert:
                         "\n" \
                         "; <token>\n" \
                         "; 텔레그램 봇을 만들면 아래와 같은 형식의 토큰을 생성해줍니다. 토큰을 받아서 설정해 줍니다\n" \
-                        "; token = 110201543:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw \n" \
+                        "; token = 110201543:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw\n" \
                         "\n" \
                         "; <clientid> 텔레그램 클라이언트 아이디\n" \
                         "; 필수 사항은 아니며 설정하지 않은 경우 프로그램 실행시 자동으로 받아옵니다\n" \
@@ -457,7 +457,6 @@ class TwitchLiveAlert:
                 timeStr = self.convertUTCtoLocalTime(streamData.get(n)[2])
                 thumbURL = "https://static-cdn.jtvnw.net/previews-ttv/live_user_{0}-640x360.jpg?a={1}".format(n, time.time())
                 category = escape(self.gameData.get(streamData.get(n)[4], ""))
-                # category = self.gameData.get(streamData.get(n)[4], "").replace('"', "&#34;").replace("'", "&#39;").replace("<", "&#60;").replace(">", "&#62;")
 
                 if category:
                     category = "<a href='https://www.twitch.tv/directory/game/{game}'>{game}</a>".format(game=category)
@@ -465,7 +464,6 @@ class TwitchLiveAlert:
                     category = "-"
 
                 title = escape(streamData.get(n)[1].strip())
-                # title = streamData.get(n)[1].strip().replace('"', "&#34;").replace("'", "&#39;").replace("<", "&#60;").replace(">", "&#62;")
 
                 messagePrint = "{0} ({loginID}) ({view} 명 시청중)\n시작: {2} ({3} 경과)\n방제: '{1}'\n범주: '{game}'".format(streamData.get(n)[0], streamData.get(n)[1].strip(), timeStr[0], timeStr[1], loginID=n, view=streamData.get(n)[3], game=self.gameData.get(streamData.get(n)[4], "-"))
                 message = "<a href='https://www.twitch.tv/{loginID}'>{0} ({loginID})</a> ({eye} <i>{view}</i>)\n시작: {2} (<i>{3}</i> 경과)\n방제: <b>{1}</b>\n범주: {game}".format(streamData.get(n)[0], title, timeStr[0], timeStr[1], loginID=n, eye=eye, view=streamData.get(n)[3], game=category)
