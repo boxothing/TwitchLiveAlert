@@ -95,7 +95,7 @@ def getAPIResponse(url, clientID=None, kraken=None, token=None, ignoreHeader=Non
             info = res.json()
 
             if not kraken:
-                if info["data"]:
+                if info.get("data"):
                     return info
             else:
                 if info:
@@ -243,11 +243,13 @@ def parseM3U8(inputM3U8, excludeURL=None, limit=0): # No leak
 
             if "#EXTM3U" not in n and n[0] == "#":
                 temp = n.split(":", 1) # Split at first colon
+
                 if temp[0] in extraKeys: # Split again for extra options
                     temp2 = [n.split("=") for n in re.split(r',(?=[A-Z])', temp[1].replace('"', ""))] # Split at comma followed by capitalized letter
 
                     if temp[0] in multiKeys: # Create list for multikeys
                         tempDict = {}
+
                         for m in temp2:
                             if len(m) > 1:
                                 tempDict[m[0]] = m[1]
@@ -259,6 +261,7 @@ def parseM3U8(inputM3U8, excludeURL=None, limit=0): # No leak
                                 parsed[temp[0]] = [tempDict]
                     else:
                         tempDict = {}
+
                         for m in temp2:
                             if len(m) > 1:
                                 tempDict[m[0]] = m[1]
@@ -402,7 +405,7 @@ class winNotify(threading.Thread):
         self.expiration = 3 * 60 * 1000 # Bug? Expiration isn't honored when compiled :(
         self.count = 0
 
-        zroya.init("TLA", " ", " ", " ", "v2.0")
+        zroya.init("TLA", " ", " ", " ", "v2.1")
         self.template = zroya.Template(zroya.TemplateType.ImageAndText4)
         self.template.setFirstLine("생방알리미")
         self.template.setSecondLine("{} ({}) ({} 경과)".format(self.displayName, self.loginID, self.elapsed))
@@ -567,11 +570,13 @@ class ChannelLoopThread(threading.Thread):
 
 class TwitchLiveAlert:
     def __init__(self):
-        self.ver = "v2.0"
+        self.ver = "v2.1"
         safeprint("트위치 생방알리미 {0}".format(self.ver))
         self.userData = {}
         self.priorityData = {}
         self.gameData = {}
+        self.listHashP = 0
+        self.listHashN = 0
         self.configFile = "알리미설정.ini"
 
         if self.createConfig(self.configFile): # Config file created
@@ -763,15 +768,18 @@ class TwitchLiveAlert:
         return False
 
     # Add or remove loginID from userData
-    def updateUserData(self, userData, priority=None):
+    def updateUserData(self, userData, forced=None, priority=None):
         loginIDList = []
         removed = []
         added = []
+        dataResponse = {}
 
         if priority:
             loginIDList = fileToList(self.userPriority, removeDuplicate=True)
+            userHash = self.listHashP
         else:
             loginIDList = fileToList(self.userListFile, removeDuplicate=True)
+            userHash = self.listHashN
 
         # Remove non-matching key
         for k in list(userData):
@@ -779,14 +787,28 @@ class TwitchLiveAlert:
                 userData.pop(k, None)
                 removed.append(str(k))
 
-        if self.needUpdate(loginIDList, userData):
-            tempData = self.getUserDatafromLoginIDs(loginIDList)
+        currentHash = hash(str(loginIDList)) # Get list hash
 
-            # Add missing key value pair
-            for k, v in tempData.items():
-                if k not in userData:
-                    userData.update({k:v})
-                    added.append(str(k))
+        if (currentHash != userHash and self.needUpdate(loginIDList, userData)) or forced: # Update when hash changes or when forced
+            if priority:
+                self.listHashP = currentHash
+            else:
+                self.listHashN = currentHash
+
+            dataResponse = self.getUserDatafromLoginIDs(loginIDList)
+
+            if dataResponse:
+                # Add missing key value pair
+                for k, v in dataResponse.items():
+                    if k not in userData:
+                        userData.update({k:v})
+                        added.append(str(k))
+
+                # Remove invalid key value pair from userData (either username has changed or banned)
+                for k in list(userData):
+                    if k not in dataResponse:
+                        userData.pop(k, None)
+                        removed.append(str(k))
 
         listType = "[속성] " if priority else "[일반] "
 
@@ -952,6 +974,8 @@ class TwitchLiveAlert:
 
     # Main loop thread
     def loopLiveAlert(self, fileName="[일반] 알림목록.txt", fileName2="[속성] 알림목록.txt"):
+        forceCount = 0
+        forceUpdate = False
         self.createAlertFile(fileName)
         self.createAlertFile(fileName2)
 
@@ -960,8 +984,12 @@ class TwitchLiveAlert:
         sendMessage(self.botToken, self.TGclientID, "{0} 트위치 생방알리미 시작!\n[일반] | [썸네일 <i>{1}</i>] [{stopwatch} <i>{2}</i>초]\n[속성] | [{stopwatch} <i>{3}</i>초]".format(timeStamp(), "ON" if self.sendThumb else "OFF", self.refresh, self.refresh2, stopwatch=stopwatch))
 
         while True:
+            if forceCount > 5:
+                forceUpdate = True
+                forceCount = 0
+
             # Update priorityData
-            self.priorityData = self.updateUserData(self.priorityData, priority=True)
+            self.priorityData = self.updateUserData(self.priorityData, forced=forceUpdate, priority=True)
 
             # Stop threads that are no longer in priority list
             for t in threading.enumerate():
@@ -979,12 +1007,16 @@ class TwitchLiveAlert:
                             ChannelLoopThread(name=n, kwargs=dict(userID=userInfo[0], displayName=userInfo[1], sleep=self.refresh2, newAlertsOnly=self.initialAlert, winnotify=self.notification, TWclientID=self.TWclientID, botToken=self.botToken, TGclientID=self.TGclientID))
 
             # Update userData
-            self.userData = self.updateUserData(self.userData, priority=False)
+            self.userData = self.updateUserData(self.userData, forced=forceUpdate, priority=False)
 
             if self.userData:
                 streamData = self.getLiveResponse()
                 self.buildMessage(streamData, self.sendThumb)
 
+            if forceUpdate:
+                forceUpdate = False
+
+            forceCount += 1
             time.sleep(self.refresh)
 
 def main():
@@ -994,6 +1026,7 @@ def main():
         liveAlert.loopLiveAlert(liveAlert.userListFile, liveAlert.userPriority)
     except Exception:
         traceback.print_exc()
+        msvcrt.getch()
 
 if __name__ == "__main__":
     printLock = threading.Lock()
