@@ -1,6 +1,6 @@
 # 트위치 생방 알리미
 
-## [생방알리미 v2.0 다운로드](https://github.com/boxothing/TwitchLiveAlert/releases/download/v2.0/TwitchLiveAlert-2.0.zip)
+## [생방알리미 v2.1 다운로드](https://github.com/boxothing/TwitchLiveAlert/releases/download/v2.1/TwitchLiveAlert-2.1.zip)
 
 ![썸네일 모드](https://i.imgur.com/WAZiAGw.jpg)
 
