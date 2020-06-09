@@ -1,6 +1,6 @@
 # 트위치 생방 알리미
 
-## [생방알리미 v2.1 다운로드](https://github.com/boxothing/TwitchLiveAlert/releases/download/v2.1/TwitchLiveAlert-2.1.zip)
+## [생방알리미 v2.2 다운로드](https://github.com/boxothing/TwitchLiveAlert/releases/download/v2.2/TwitchLiveAlert-2.2.zip)
 
 ![썸네일 모드](https://i.imgur.com/WAZiAGw.jpg)
 
@@ -12,7 +12,7 @@
 
 프로그램을 실행하고 켜두면 일정시간마다 트위치 API를 이용해 생방 여부를 확인해 줍니다
 
-일반 알림의 경우 보통 생방 시작 후 45초에서 2분30초 사이에 알림을 받고
+일반 알림의 경우 보통 생방 시작 후 45초에서 3분 사이에 알림을 받고
 
 속성 알림의 경우 평균 10초에서 20초 사이에 알림을 받습니다
 

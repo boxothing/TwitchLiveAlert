@@ -6,6 +6,8 @@ import msvcrt
 from os import makedirs
 from os.path import isfile, join, exists, dirname, abspath
 import requests
+import json
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
 import time
 from datetime import datetime, timedelta
 from html import escape
@@ -63,36 +65,49 @@ def timeStamp(format = None):
     return date_string
 
 # Returns valid API response
-def getAPIResponse(url, clientID=None, kraken=None, token=None, ignoreHeader=None, data=None, printError=None, post=None, raw=None):
+def getAPIResponse(url, clientID=None, kraken=None, token=None, ignoreHeader=None, data=None, printError=None, post=None, raw=None, ignoreKrakenHeader=None, insecure=None):
+    global needOAuthUpdate
     header = None
 
     if not ignoreHeader:
         header = {}
 
         if kraken: # Extra header for Kraken API
-            header.update({'Accept' : "application/vnd.twitchtv.v5+json"})
+            if not ignoreKrakenHeader:
+                header.update({'Accept' : "application/vnd.twitchtv.v5+json"})
+
             if clientID: header.update({'Client-ID' : clientID})
 
             if token:
                 header.update({'Authorization' : "OAuth " + token})
         else:
-            if token:
-                header.update({'Authorization' : "Bearer " + token})
-            else:
-                if clientID: header.update({'Client-ID' : clientID})
+            if clientID: header.update({'Client-ID' : clientID})
+            if token: header.update({'Authorization' : "Bearer " + token})
 
     try:
         if raw:
-            with requests.get(url, timeout=10) as res:
-                return res.content
+            if insecure:
+                with requests.get(url, timeout=10, verify=False) as res:
+                    return res.content
+            else:
+                with requests.get(url, timeout=10) as res:
+                    return res.content
         else:
             if post: # Update data
                 res = requests.post(url, data=data, headers=header, timeout=5)
             else: # Request data
-                res = requests.get(url, headers=header, timeout=10)
+                if insecure:
+                    res = requests.get(url, headers=header, timeout=10, verify=False)
+                else:
+                    res = requests.get(url, headers=header, timeout=10)
 
             # code = res.status_code
             info = res.json()
+
+            if isinstance(threading.current_thread(), threading._MainThread): # Update from main thread only
+                if info and info.get("status") == 401: # Must provide a valid Client-ID or OAuth token
+                    safeprint("Error: {}".format(info.get("message")))
+                    needOAuthUpdate = True
 
             if not kraken:
                 if info.get("data"):
@@ -104,6 +119,66 @@ def getAPIResponse(url, clientID=None, kraken=None, token=None, ignoreHeader=Non
         pass
 
     return b"" if raw else []
+
+# Get OAuth token
+def getOAuthToken(clientID, clientSecret):
+    filePath = join(dirname(__file__), "oauth.{}".format(clientID))
+    url = "https://id.twitch.tv/oauth2/token?client_id={0}&client_secret={1}&grant_type=client_credentials".format(clientID, clientSecret)
+
+    response = getAPIResponse(url, kraken=True, ignoreHeader=True, post=True)
+
+    try:
+        # safeprint("{} Fetching new access token...".format(timeStamp()))
+        safeprint("{} 새로운 토큰을 발급 받는 중...".format(timeStamp()))
+
+        if response and response.get("access_token"):
+            data = json.dumps(response)
+            outputFile(filePath, data, mode="w", raw=True)
+            # safeprint("{} Successfully grabbed access token!".format(timeStamp()))
+            safeprint("{} 성공적으로 새로운 토큰을 받았습니다!".format(timeStamp()))
+    except OSError as e:
+        safeprint("Error: " + str(e))
+
+# Returns True if current OAuth token is valid
+def validateOAuthToken(clientID):
+    filePath = join(dirname(__file__), "oauth.{}".format(clientID))
+
+    try:
+        if isfile(filePath):
+            content = readFile(filePath, whole=True)
+            data = json.loads(content)
+
+            if data:
+                token = data.get("access_token")
+                # safeprint(token)
+
+                if token:
+                    url = "https://id.twitch.tv/oauth2/validate"
+                    response = getAPIResponse(url, kraken=True, token=token, ignoreKrakenHeader=True)
+
+                    if response and response.get("client_id"): # OAuth token is valid
+                        if response.get("client_id") == clientID:
+                            return True
+    except OSError as e:
+        safeprint("Error: " + str(e))
+
+    return False
+
+# Returns OAuth access token from file
+def setOAuthToken(clientID):
+    filePath = join(dirname(__file__), "oauth.{}".format(clientID))
+
+    try:
+        if isfile(filePath):
+            content = readFile(filePath, whole=True)
+            data = json.loads(content)
+
+            if data and data.get("access_token"):
+                return data.get("access_token")
+    except:
+        pass
+
+    return ""
 
 # Returns user clientID using Telegram getUpdates API
 def getClientID(botToken):
@@ -215,6 +290,23 @@ def readFile(fileName, mode="r", whole=None):
     except OSError as e:
         safeprint("Error: " + str(e))
 
+# Output to file
+def outputFile(fileName, contents=None, mode="w", raw=None): # Output user list to file
+    try:
+        directory = dirname(fileName)
+
+        if directory and not exists(directory):
+            makedirs(directory)
+    
+        if raw:
+            with open(fileName, mode) as outfile:
+                outfile.write(contents)
+        else:
+            with open(fileName, mode, encoding="utf-8") as outfile:
+                outfile.write(contents)
+    except OSError as e:
+        safeprint("Error: " + str(e))
+
 # Build list from input file
 def fileToList(fileName, removeDuplicate=None):
     listItems = []
@@ -285,6 +377,7 @@ def parseM3U8(inputM3U8, excludeURL=None, limit=0): # No leak
 
     return parsed
 
+# Get stream data
 def getStreamInformation(clientID, loginID, quality="best", streamID=None):
     tokenURL = "https://api.twitch.tv/api/channels/{0}/access_token.json?client_id={1}&{2}".format(loginID, clientID, int(time.time()))
     sig = ""
@@ -405,14 +498,17 @@ class winNotify(threading.Thread):
         self.expiration = 3 * 60 * 1000 # Bug? Expiration isn't honored when compiled :(
         self.count = 0
 
-        zroya.init("TLA", " ", " ", " ", "v2.1")
+        zroya.init("TLA", " ", " ", " ", TLAversion)
         self.template = zroya.Template(zroya.TemplateType.ImageAndText4)
         self.template.setFirstLine("생방알리미")
         self.template.setSecondLine("{} ({}) ({} 경과)".format(self.displayName, self.loginID, self.elapsed))
         self.template.setThirdLine(self.title)
         self.template.addAction("바로가기!")
         self.template.addAction("나중에...")
-        self.template.setImage(Logo)
+
+        if isfile(Logo):
+            self.template.setImage(Logo)
+
         self.template.setExpiration(self.expiration)
         self.template.setAttribution(self.game)
         self.template.setAudio(audio=zroya.Audio.Alarm, mode=zroya.AudioMode.Default)
@@ -466,6 +562,7 @@ class winNotify(threading.Thread):
 
 class ChannelLoopThread(threading.Thread):
     def __init__(self,  *args, **kwargs):
+        global OAuthToken
         super(ChannelLoopThread, self).__init__(*args, **kwargs)
         self.stopThread = False
         self.daemon = True
@@ -543,35 +640,37 @@ class ChannelLoopThread(threading.Thread):
 
     def run(self):
         while True:
-            streamInfo = getStreamInformation(self.TWclientIDPriv, self.loginID, streamID=self.broadcastID)
+            try:
+                streamInfo = getStreamInformation(self.TWclientIDPriv, self.loginID, streamID=self.broadcastID)
 
-            if streamInfo and isinstance(streamInfo, dict):
-                if streamInfo.get("newStream") and streamInfo.get("broadcastID") > self.broadcastID:
-                    if streamInfo.get("startTimeString"):
-                        self.broadcastID = streamInfo.get("broadcastID")
-                        self.buildMessage(streamInfo)
-                    else: # Sometimes time string isn't extracted
-                        time.sleep(3)
-                        continue
+                if streamInfo and isinstance(streamInfo, dict):
+                    if streamInfo.get("newStream") and streamInfo.get("broadcastID") > self.broadcastID:
+                        if streamInfo.get("startTimeString"):
+                            self.broadcastID = streamInfo.get("broadcastID")
+                            self.buildMessage(streamInfo)
+                        else: # Rare but sometimes time string isn't extracted
+                            time.sleep(3)
+                            continue
 
-            if self.newAlertsOnly:
-                self.newAlertsOnly = False
+                if self.newAlertsOnly:
+                    self.newAlertsOnly = False
 
-            t0 = time.time()
+                t0 = time.time()
 
-            while time.time() - t0 < self.sleep:
-                if self.stopThread:
-                    return True
+                while time.time() - t0 < self.sleep:
+                    if self.stopThread:
+                        return True
 
-                time.sleep(1)
+                    time.sleep(1)
+            except:
+                pass
 
     def stop(self):
         self.stopThread = True
 
 class TwitchLiveAlert:
     def __init__(self):
-        self.ver = "v2.1"
-        safeprint("트위치 생방알리미 {0}".format(self.ver))
+        safeprint("트위치 생방알리미 {0}".format(TLAversion))
         self.userData = {}
         self.priorityData = {}
         self.gameData = {}
@@ -601,7 +700,9 @@ class TwitchLiveAlert:
             safeprint("토큰 설정이 안 된 경우 윈도우 알림 기능만 작동합니다")
             # exitOnKey()
 
+        # Please use your own client id and secret
         self.TWclientID = "b36dxtency2u8jj09wx4tdqgwqk159"
+        self.TWclientSecret = ""
 
         if not self.TGclientID: # Request TGclientID if missing from configFile
             self.TGclientID = getClientID(self.botToken)
@@ -733,29 +834,40 @@ class TwitchLiveAlert:
             safeprint("Error: {}".format(e))
 
     # Get userData from list of loginIDs using Helix API
-    def getUserDatafromLoginIDs(self, loginIDList):
+    def getUserDatafromLoginIDs(self, loginIDList, kraken=None):
         maxURLSize = 99
         lowerIndex = 0
         userData = {}
 
         if loginIDList:
             while lowerIndex < len(loginIDList): # Loop through loginIDList and update streamData information
-                url = "https://api.twitch.tv/helix/users?"
+                if kraken:
+                    url = "https://api.twitch.tv/kraken/users?"
+                else:
+                    url = "https://api.twitch.tv/helix/users?"
+
                 upperIndex = min(lowerIndex + maxURLSize, len(loginIDList))
 
                 for k in loginIDList[lowerIndex:upperIndex]:
-                    url += "login=" + k + "&"
+                    if kraken:
+                        url += "login=" + k + ","
+                    else:
+                        url += "login=" + k + "&"
 
-                if url[-1] == "&":
+                if url[-1] == "&" or url[-1] == ",":
                     url = url[:-1]
 
                 lowerIndex += maxURLSize
-
-                info = getAPIResponse(url, clientID=self.TWclientID)
+                info = getAPIResponse(url, clientID=self.TWclientID, token=OAuthToken, kraken=kraken)
 
                 if info:
-                    for n in info["data"]:
-                        userData[n.get("login")] = [n.get("id"), n.get("display_name"), n.get("streamID", "0")] # loginID: [userID, displayName, streamID]
+                    if kraken:
+                        if info.get("users"):
+                            for n in info.get("users"):
+                                userData[n.get("name")] = [n.get("_id"), n.get("display_name"), n.get("streamID", "0")]
+                    else:
+                        for n in info["data"]:
+                            userData[n.get("login")] = [n.get("id"), n.get("display_name"), n.get("streamID", "0")] # loginID: [userID, displayName, streamID]
 
         return userData
 
@@ -860,7 +972,7 @@ class TwitchLiveAlert:
 
                 lowerIndex += maxURLSize
 
-                info = getAPIResponse(url, clientID=self.TWclientID)
+                info = getAPIResponse(url, clientID=self.TWclientID, token=OAuthToken)
 
                 if info:
                     for n in info["data"]:
@@ -889,7 +1001,7 @@ class TwitchLiveAlert:
 
             lowerIndex += maxURLSize
 
-            info = getAPIResponse(url, clientID=self.TWclientID)
+            info = getAPIResponse(url, clientID=self.TWclientID, token=OAuthToken)
 
             if info:
                 for n in info["data"]:
@@ -974,6 +1086,9 @@ class TwitchLiveAlert:
 
     # Main loop thread
     def loopLiveAlert(self, fileName="[일반] 알림목록.txt", fileName2="[속성] 알림목록.txt"):
+        global needOAuthUpdate
+        global OAuthToken
+
         forceCount = 0
         forceUpdate = False
         self.createAlertFile(fileName)
@@ -983,7 +1098,40 @@ class TwitchLiveAlert:
         safeprint(timeStamp(), "트위치 생방알리미 시작!")
         sendMessage(self.botToken, self.TGclientID, "{0} 트위치 생방알리미 시작!\n[일반] | [썸네일 <i>{1}</i>] [{stopwatch} <i>{2}</i>초]\n[속성] | [{stopwatch} <i>{3}</i>초]".format(timeStamp(), "ON" if self.sendThumb else "OFF", self.refresh, self.refresh2, stopwatch=stopwatch))
 
+        if not validateOAuthToken(self.TWclientID):
+            # safeprint("{} Need to get valid OAuth Token".format(timeStamp()))
+            safeprint("{} 유효한 인증 토큰이 필요합니다".format(timeStamp()))
+            getOAuthToken(self.TWclientID, self.TWclientSecret)
+
+        OAuthToken = setOAuthToken(self.TWclientID)
+
         while True:
+            # Download missing files. Temp folder tends to purge after one week.
+            if getattr(sys, 'frozen', False): # Only when run in bundle
+                if not isfile(CACert): # missing cacert file
+                    safeprint(timeStamp(), "cacert.pem 파일이 존재하지 않아 새로 다운로드합니다...")
+
+                    url = "https://mkcert.org/generate/"
+                    data = getAPIResponse(url, ignoreHeader=True, raw=True, insecure=True)
+
+                    if data and b"Issuer" in data:
+                        outputFile(CACert, data, mode="wb", raw=True)
+
+                if not isfile(Logo): # missing logo file
+                    safeprint(timeStamp(), "bt.ico 파일이 존재하지 않아 새로 다운로드합니다...")
+
+                    url = "https://raw.githubusercontent.com/boxothing/TwitchLiveAlert/master/src/bt.ico"
+                    data = getAPIResponse(url, ignoreHeader=True, raw=True, insecure=True)
+
+                    if data:
+                        outputFile(Logo, data, mode="wb", raw=True)
+
+            if needOAuthUpdate:
+                safeprint("Need to update OAuth Token...")
+                needOAuthUpdate = False
+                getOAuthToken(self.TWclientID, self.TWclientSecret)
+                OAuthToken = setOAuthToken(self.TWclientID)
+
             if forceCount > 5:
                 forceUpdate = True
                 forceCount = 0
@@ -1025,10 +1173,17 @@ def main():
         liveAlert = TwitchLiveAlert()
         liveAlert.loopLiveAlert(liveAlert.userListFile, liveAlert.userPriority)
     except Exception:
+        safeprint("{} Main thread error!".format(timeStamp()))
         traceback.print_exc()
         msvcrt.getch()
 
 if __name__ == "__main__":
+    TLAversion = "v2.2"
+    requests.packages.urllib3.disable_warnings(InsecureRequestWarning) # Suppress warning messages
+    needOAuthUpdate = False
+    OAuthToken = ""
     printLock = threading.Lock()
     Logo = resourcePath("bt.ico")
+    CACert = resourcePath("certifi/cacert.pem")
+
     main()
