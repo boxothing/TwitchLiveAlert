@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
 import sys, signal
+import win32api,win32process,win32con
 import configparser
 import msvcrt
+import os
 from os import makedirs
 from os.path import isfile, join, exists, dirname, abspath
 import requests
@@ -52,6 +54,21 @@ def resourcePath(relPath):
         basePath = abspath(".")
 
     return join(basePath, relPath)
+
+def setpriority(pid=None,priority=1):
+    # Set priority between 0-5 where 2 is normal priority.
+
+    priorityclasses = [win32process.IDLE_PRIORITY_CLASS,
+                       win32process.BELOW_NORMAL_PRIORITY_CLASS,
+                       win32process.NORMAL_PRIORITY_CLASS,
+                       win32process.ABOVE_NORMAL_PRIORITY_CLASS,
+                       win32process.HIGH_PRIORITY_CLASS,
+                       win32process.REALTIME_PRIORITY_CLASS]
+    if pid == None:
+        pid = win32api.GetCurrentProcessId()
+
+    handle = win32api.OpenProcess(win32con.PROCESS_ALL_ACCESS, True, pid)
+    win32process.SetPriorityClass(handle, priorityclasses[priority])
 
 # Print current date and time
 def timeStamp(format = None):
@@ -106,7 +123,7 @@ def getAPIResponse(url, clientID=None, kraken=None, token=None, ignoreHeader=Non
 
             if isinstance(threading.current_thread(), threading._MainThread): # Update from main thread only
                 if info and info.get("status") == 401: # Must provide a valid Client-ID or OAuth token
-                    safeprint("Error: {}".format(info.get("message")))
+                    safeprint("{} Error: {}".format(timeStamp(), info.get("message")))
                     needOAuthUpdate = True
 
             if not kraken:
@@ -136,8 +153,8 @@ def getOAuthToken(clientID, clientSecret):
             outputFile(filePath, data, mode="w", raw=True)
             # safeprint("{} Successfully grabbed access token!".format(timeStamp()))
             safeprint("{} 성공적으로 새로운 토큰을 받았습니다!".format(timeStamp()))
-    except OSError as e:
-        safeprint("Error: " + str(e))
+    except:
+        pass
 
 # Returns True if current OAuth token is valid
 def validateOAuthToken(clientID):
@@ -159,8 +176,8 @@ def validateOAuthToken(clientID):
                     if response and response.get("client_id"): # OAuth token is valid
                         if response.get("client_id") == clientID:
                             return True
-    except OSError as e:
-        safeprint("Error: " + str(e))
+    except:
+        return False
 
     return False
 
@@ -220,6 +237,9 @@ def sendMessage(botToken, TGclientID, message):
                 safeprint("메시지 전달 오류: 설정파일이 잘못되었거나 메시지 호환이 안 됩니다")
             elif res["error_code"] == 403:
                 safeprint("메시지 권한 오류: 봇에게 먼저 대화를 걸어주세요")
+            else:
+                if res.get("error_code"):
+                    safeprint("메시지 오류: {}".format(res.get("error_code")))
         else:
             return True
 
@@ -247,6 +267,9 @@ def sendPhoto(botToken, TGclientID, photo, caption=""):
                 safeprint("메시지 전달 오류: 설정파일이 잘 못 되었거나 메시지 호환이 안 됩니다")
             elif res["error_code"] == 403:
                 safeprint("메시지 권한 오류: 봇에게 먼저 대화를 걸어주세요")
+            else:
+                if res.get("error_code"):
+                    safeprint("메시지 오류: {}".format(res.get("error_code")))
         else:
             return True
 
@@ -297,7 +320,7 @@ def outputFile(fileName, contents=None, mode="w", raw=None): # Output user list 
 
         if directory and not exists(directory):
             makedirs(directory)
-    
+
         if raw:
             with open(fileName, mode) as outfile:
                 outfile.write(contents)
@@ -378,7 +401,7 @@ def parseM3U8(inputM3U8, excludeURL=None, limit=0): # No leak
     return parsed
 
 # Get stream data
-def getStreamInformation(clientID, loginID, quality="best", streamID=None):
+def getStreamInformation(clientID, loginID, quality="best", streamID=[]):
     tokenURL = "https://api.twitch.tv/api/channels/{0}/access_token.json?client_id={1}&{2}".format(loginID, clientID, int(time.time()))
     sig = ""
     token = getAPIResponse(tokenURL, kraken=True, ignoreHeader=True)
@@ -387,7 +410,7 @@ def getStreamInformation(clientID, loginID, quality="best", streamID=None):
     try:
         if token and isinstance(token, dict):
             if token.get("error"):
-                if token.get("message"): safeprint("Token Error #{0}: {1}".format(token.get("status"), token.get("message")))
+                if token.get("message"): safeprint("{0} Token Error #{1}: {2}".format(timeStamp(), token.get("status"), token.get("message")))
             else:
                 sig = token.get("sig", "")
                 token = quote(token.get("token", "")) # Convert to url safe string
@@ -434,7 +457,7 @@ def getStreamInformation(clientID, loginID, quality="best", streamID=None):
                                 idx = i
                                 break
 
-                    if (streamID and streamID < broadcastID) or (not streamID and idx > -1): # Skip further parsing if current stream is equal to previous stream
+                    if (streamID and broadcastID not in streamID) or (not streamID and idx > -1): # Skip further parsing if current stream is equal to previous stream
                         streamURL = streamList.get("url")
 
                         if streamURL and streamURL[idx]:
@@ -450,7 +473,7 @@ def getStreamInformation(clientID, loginID, quality="best", streamID=None):
 
                     try:
                         if serverTime and streamTime:
-                            streamInfo["newStream"] = False if streamID and streamID == broadcastID else True
+                            streamInfo["newStream"] = False if streamID and broadcastID in streamID else True
                             streamInfo["serverTime"] = float(serverTime)
                             streamInfo["streamTime"] = float(streamTime)
                             streamInfo["broadcastID"] = broadcastID
@@ -581,7 +604,7 @@ class ChannelLoopThread(threading.Thread):
         except:
             return
 
-        self.broadcastID = 0
+        self.broadcastID = []
 
         if not self.sleep or self.sleep < 3: # Set default sleep value if not specified or set too low
             self.sleep = 10
@@ -644,9 +667,12 @@ class ChannelLoopThread(threading.Thread):
                 streamInfo = getStreamInformation(self.TWclientIDPriv, self.loginID, streamID=self.broadcastID)
 
                 if streamInfo and isinstance(streamInfo, dict):
-                    if streamInfo.get("newStream") and streamInfo.get("broadcastID") > self.broadcastID:
+                    if streamInfo.get("newStream"):
                         if streamInfo.get("startTimeString"):
-                            self.broadcastID = streamInfo.get("broadcastID")
+                            if len(self.broadcastID) > 4: # Keep last 5 broadcastIDs
+                                self.broadcastID.pop(0)
+
+                            self.broadcastID.append(streamInfo.get("broadcastID"))
                             self.buildMessage(streamInfo)
                         else: # Rare but sometimes time string isn't extracted
                             time.sleep(3)
@@ -864,10 +890,10 @@ class TwitchLiveAlert:
                     if kraken:
                         if info.get("users"):
                             for n in info.get("users"):
-                                userData[n.get("name")] = [n.get("_id"), n.get("display_name"), n.get("streamID", "0")]
+                                userData[n.get("name")] = [n.get("_id"), n.get("display_name"), [n.get("streamID")] if n.get("streamID") else []]
                     else:
                         for n in info["data"]:
-                            userData[n.get("login")] = [n.get("id"), n.get("display_name"), n.get("streamID", "0")] # loginID: [userID, displayName, streamID]
+                            userData[n.get("login")] = [n.get("id"), n.get("display_name"), [n.get("streamID")] if n.get("streamID") else []] # loginID: [userID, displayName, streamID]
 
         return userData
 
@@ -1008,8 +1034,13 @@ class TwitchLiveAlert:
                     match = self.searchForValue(self.userData, n.get("user_id"))
 
                     if match:
-                        if int(n.get("id", "0")) > int(self.userData.get(match)[2]): # New streamID
-                            self.userData.get(match)[2] = n.get("id", "0")
+                        streamID = n.get("id")
+
+                        if streamID and streamID not in self.userData.get(match)[2]: # New streamID
+                            if len(self.userData.get(match)[2]) > 4: # Keep last 5 streamIDs
+                                self.userData.get(match)[2].pop(0)
+
+                            self.userData.get(match)[2].append(streamID)
                             streamData[match] = [n.get("user_name"), n.get("title"), n.get("started_at"), n.get("viewer_count"), n.get("game_id")]
 
         # Build gameID to gameName dictionary
@@ -1106,28 +1137,8 @@ class TwitchLiveAlert:
         OAuthToken = setOAuthToken(self.TWclientID)
 
         while True:
-            # Download missing files. Temp folder tends to purge after one week.
-            if getattr(sys, 'frozen', False): # Only when run in bundle
-                if not isfile(CACert): # missing cacert file
-                    safeprint(timeStamp(), "cacert.pem 파일이 존재하지 않아 새로 다운로드합니다...")
-
-                    url = "https://mkcert.org/generate/"
-                    data = getAPIResponse(url, ignoreHeader=True, raw=True, insecure=True)
-
-                    if data and b"Issuer" in data:
-                        outputFile(CACert, data, mode="wb", raw=True)
-
-                if not isfile(Logo): # missing logo file
-                    safeprint(timeStamp(), "bt.ico 파일이 존재하지 않아 새로 다운로드합니다...")
-
-                    url = "https://raw.githubusercontent.com/boxothing/TwitchLiveAlert/master/src/bt.ico"
-                    data = getAPIResponse(url, ignoreHeader=True, raw=True, insecure=True)
-
-                    if data:
-                        outputFile(Logo, data, mode="wb", raw=True)
-
             if needOAuthUpdate:
-                safeprint("Need to update OAuth Token...")
+                safeprint("{} Need to update OAuth Token...".format(timeStamp()))
                 needOAuthUpdate = False
                 getOAuthToken(self.TWclientID, self.TWclientSecret)
                 OAuthToken = setOAuthToken(self.TWclientID)
@@ -1178,12 +1189,20 @@ def main():
         msvcrt.getch()
 
 if __name__ == "__main__":
-    TLAversion = "v2.2"
+    setpriority()
+    TLAversion = "v2.3"
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning) # Suppress warning messages
     needOAuthUpdate = False
     OAuthToken = ""
     printLock = threading.Lock()
     Logo = resourcePath("bt.ico")
     CACert = resourcePath("certifi/cacert.pem")
+    baseLib = resourcePath("base_library.zip")
+
+    # Lock files
+    if getattr(sys, 'frozen', False): # Only when run in bundle
+        os.open(Logo, os.O_RDONLY)
+        os.open(CACert, os.O_RDONLY)
+        os.open(baseLib, os.O_RDONLY)
 
     main()
