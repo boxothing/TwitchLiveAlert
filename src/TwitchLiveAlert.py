@@ -217,7 +217,7 @@ def setOAuthToken(clientID):
 # Returns user clientID using Telegram getUpdates API
 def getClientID(botToken):
     if not botToken:
-        return
+        return {}
 
     clientIDs = {}
     url = "https://api.telegram.org/bot{0}/{1}".format(botToken, "getUpdates")
@@ -734,6 +734,12 @@ class ChannelLoopThread(threading.Thread):
             game = ""
             category = ""
             volt = u'\U000026A1'
+            ts = streamInfo.get("startTime", "")
+            hashStr1 = "{}_{}_{}".format(self.loginID, streamInfo.get("broadcastID", ""), ts)
+            hashStr2 = "{}_{}_{}".format(self.loginID, streamInfo.get("broadcastID", ""), int(ts) + 1 if ts else "") 
+            hashSha1 = []
+            hashSha1.append(hashlib.sha1(hashStr1.encode()).hexdigest()[:20])
+            hashSha1.append(hashlib.sha1(hashStr2.encode()).hexdigest()[:20])
 
             # Grab title and game
             url = "https://api.twitch.tv/helix/channels?broadcaster_id={0}".format(self.userID)
@@ -754,7 +760,8 @@ class ChannelLoopThread(threading.Thread):
             messagePrint = "{} ({}) {}\n".format(self.displayName, self.loginID, volt) + \
                             "시작: {} ({} 경과)\n".format(streamInfo.get("startTimeString", ""), streamInfo.get("elapsedTotal", "")) + \
                             "방제: '{}'\n".format(title) + \
-                            "범주: '{}'".format(game)
+                            "범주: '{}'\n".format(game) + \
+                            "\n{}_{}\n{}_{}".format(hashSha1[0], hashStr1, hashSha1[1], hashStr2)
 
             message = "<a href='https://www.twitch.tv/{loginID}'>{displayName} ({loginID})</a> {volt}\n".format(loginID=self.loginID, displayName=self.displayName, volt=volt) + \
                         "시작: {} (<i>{}</i> 경과)\n".format(streamInfo.get("startTimeString", ""), streamInfo.get("elapsedTotal", "")) + \
@@ -839,7 +846,7 @@ class TwitchLiveAlert:
             safeprint("토큰 설정이 안 된 경우 윈도우 알림 기능만 작동한다에요")
             # exitOnKey()
 
-        # Please use your own client id and secret
+        # Please use your own client id and secret (https://dev.twitch.tv/)
         self.TWclientID = "b36dxtency2u8jj09wx4tdqgwqk159"
         self.TWclientSecret = ""
 
@@ -1050,7 +1057,7 @@ class TwitchLiveAlert:
                         if userIDLookup:
                             userData[n.get("id")] = [n.get("login"), n.get("display_name"), btype.get(n.get("broadcaster_type")), False, [n.get("streamID")] if n.get("streamID") else []] # userID: [loginID, displayName, broadcasterType, live, [streamID]]
                         else:
-                            userData[n.get("login")] = [n.get("id"), n.get("display_name"), btype.get(n.get("broadcaster_type")), False, [n.get("streamID")] if n.get("streamID") else []] # loginID: [userID, displayName, broadcasterType, live, [streamID]]
+                            userData[n.get("login")] = [n.get("id"), n.get("display_name"), btype.get(n.get("broadcaster_type")), False, None, [n.get("streamID")] if n.get("streamID") else []] # loginID: [userID, displayName, broadcasterType, live, time, [streamID]]
 
         return userData
 
@@ -1242,6 +1249,7 @@ class TwitchLiveAlert:
 
                     if match:
                         streamID = n.get("id")
+                        streamTime = n.get("started_at")
 
                         if streamID:
                             userData.get(match)[3] = True
@@ -1249,6 +1257,12 @@ class TwitchLiveAlert:
                             if streamID not in userData.get(match)[-1]: # New streamID
                                 if len(userData.get(match)[-1]) > 4: # Keep last 5 streamIDs
                                     userData.get(match)[-1].pop(0)
+
+                                if streamTime:
+                                    timeStampUTC = round(datetime.fromisoformat(streamTime.replace("Z", "+00:00")).timestamp())
+
+                                    if timeStampUTC:
+                                        userData.get(match)[4] = timeStampUTC
 
                                 userData.get(match)[-1].append(streamID)
                                 streamData[match] = [n.get("user_name"), n.get("title"), n.get("started_at"), n.get("viewer_count"), n.get("game_id"), streamID]
@@ -1274,6 +1288,8 @@ class TwitchLiveAlert:
                 thumbURL = "https://static-cdn.jtvnw.net/previews-ttv/live_user_{0}-640x360.jpg?a={1}".format(n, time.time())
                 category = self.gameData.get(streamData.get(n)[4], "")
                 timeStampUTC = round(datetime.fromisoformat(streamData.get(n)[2].replace("Z", "+00:00")).timestamp())
+                hashStr = "{}_{}_{}".format(n, streamData.get(n)[5], timeStampUTC)
+                hashSha1 = hashlib.sha1(hashStr.encode()).hexdigest()[:20]
 
                 if category:
                     category = "<a href='https://www.twitch.tv/directory/game/{gameHTML}'>{game}</a>".format(gameHTML=quote(category, safe=''), game=escape(category))
@@ -1283,7 +1299,8 @@ class TwitchLiveAlert:
                 messagePrint = "{} ({}) ({} 명 시청중)\n".format(streamData.get(n)[0], n, streamData.get(n)[3]) + \
                                 "시작: {} ({} 경과)\n".format(timeStr[0], timeStr[1]) + \
                                 "방제: '{}'\n".format(streamData.get(n)[1].strip()) + \
-                                "범주: '{}'".format(self.gameData.get(streamData.get(n)[4], "-"))
+                                "범주: '{}'\n".format(self.gameData.get(streamData.get(n)[4], "-")) + \
+                                "\n{}_{}".format(hashSha1, hashStr)
 
                 message = "<a href='https://www.twitch.tv/{loginID}'>{displayName} ({loginID})</a> ({eye} <i>{view}</i>)\n".format(loginID=n, displayName=streamData.get(n)[0], eye=eye, view=streamData.get(n)[3]) + \
                             "시작: {} (<i>{}</i> 경과)\n".format(timeStr[0], timeStr[1]) + \
@@ -1328,10 +1345,6 @@ class TwitchLiveAlert:
 
                     if self.notification:
                         winNotify(kwargs=dict(displayName=n[1], loginID=n[0], btype=n[3]))
-
-                    for t in threading.enumerate(): # Stop thread with old displayName
-                        if t.name != "MainThread" and t.name == n[0]:
-                            t.stop()
                 elif n[4]: # loginID change
                     messagePrint = "{} ({})\n".format(n[1], n[0]) + \
                                     "[{}] {} [{}]\n".format(n[4], arrow, n[0]) + \
@@ -1354,6 +1367,10 @@ class TwitchLiveAlert:
 
                     if self.notification:
                         winNotify(kwargs=dict(displayName=n[1], loginID=n[0], oldName=n[2]))
+
+                    for t in threading.enumerate(): # Stop thread with old displayName
+                        if t.name != "MainThread" and t.name == n[0]:
+                            t.stop()
 
                 safeprint("{0}\n{1} {2}\n{3}".format("-"*50, timeStamp(), messagePrint, "-"*50))
 
@@ -1386,12 +1403,16 @@ class TwitchLiveAlert:
         for k in self.priorityData:
             if k not in onlineList and self.priorityData.get(k)[3]:
                 onlineList.append(k)
-                message += "{} ({})\n".format(self.priorityData.get(k)[1], k)
+                hashStr = "{}_{}_{}".format(k, self.priorityData.get(k)[-1][-1], self.priorityData.get(k)[4])
+                hashSha1 = hashlib.sha1(hashStr.encode()).hexdigest()[:20]
+                message += "{} ({}) [{}_{}]\n".format(self.priorityData.get(k)[1], k, hashSha1, hashStr)
 
         for k in self.userData:
             if k not in onlineList and self.userData.get(k)[3]:
                 onlineList.append(k)
-                message += "{} ({})\n".format(self.userData.get(k)[1], k)
+                hashStr = "{}_{}_{}".format(k, self.userData.get(k)[-1][-1], self.userData.get(k)[4])
+                hashSha1 = hashlib.sha1(hashStr.encode()).hexdigest()[:20]
+                message += "{} ({}) [{}_{}]\n".format(self.userData.get(k)[1], k, hashSha1, hashStr)
 
         if message:
             safeprint("{}\n{} 현재 방송 중...[{}]\n{}\n{}{}".format("-"*50, timeStamp(), len(onlineList), "-"*50, message, "-"*50))
@@ -1502,7 +1523,7 @@ class TwitchLiveAlert:
                 if t.name != "MainThread" and t.name not in list(self.priorityData.keys()):
                     t.stop()
 
-            if self.priorityData: # loginID: [userID, displayName, broadcasterType, live, [streamID]]
+            if self.priorityData: # loginID: [userID, displayName, broadcasterType, live, time, [streamID]]
                 currentThreads = [t.name for t in threading.enumerate() if t.name != "MainThread"]
 
                 for n in self.priorityData:
@@ -1536,7 +1557,7 @@ class TwitchLiveAlert:
                 streamData, self.userData = self.getLiveResponse(self.userData)
                 self.buildMessage(streamData, self.sendThumb)
 
-            # Notify displayName or broadcasterType changes
+            # Notify loginID, displayName or broadcasterType changes
             self.notifyUserChange()
 
             # Print live streams on start (when newalertsonly is set to true)
@@ -1568,7 +1589,7 @@ if __name__ == "__main__":
     setpriority()
     appName = "생방알리미"
     AUMID = "TLA.TwitchLiveAlert"
-    TLAversion = "v2.4"
+    TLAversion = "v2.5"
     configFile = "알리미설정.ini"
     requests.packages.urllib3.disable_warnings(InsecureRequestWarning) # Suppress warning messages
     needOAuthUpdate = False
